@@ -2,11 +2,11 @@ import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as rds from 'aws-cdk-lib/aws-rds';
-import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as fs from 'fs';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as autoscaling from 'aws-cdk-lib/aws-autoscaling';
 
-// Define custom properties for the stack (extend from StackProps)
+// Custom StackProps interface without `envName`
 interface GenaiStackProps extends cdk.StackProps {
   vpcCidr: string;
   instanceType: string;
@@ -24,18 +24,28 @@ export class GenaiStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: GenaiStackProps) {
     super(scope, id, props);
 
+    // Load config.json file
     const config = JSON.parse(fs.readFileSync('config.json', 'utf8'));
-    const envName = process.env.DEPLOY_ENV || 'dev';
-    const envConfig = config[envName];
 
+    // Get environment name (default to 'dev')
+    const envName = process.env.DEPLOY_ENV || 'dev';
+    const envConfig = config[envName]; // Fetch the environment-specific configuration
+
+    if (!envConfig) {
+      throw new Error(`Configuration for environment "${envName}" is missing in config.json.`);
+    }
+
+    // Extract variables from the environment-specific config
     const vpcCidr = envConfig.vpcCidr;
     const instanceType = envConfig.instanceType;
     const dbEngine = envConfig.dbEngine;
     const dbStorage = envConfig.dbStorage;
-    const dbInstanceType = envConfig.dbInstanceType;
+    const dbInstanceType = envConfig.dbInstanceType || 'db.t3.micro'; // Default to db.t3.micro if not specified
     const desiredCapacity = envConfig.desiredCapacity;
     const minCapacity = envConfig.minCapacity;
     const maxCapacity = envConfig.maxCapacity;
+    const dbAdminUsername = envConfig.dbAdminUsername;
+    const dbAdminPassword = envConfig.dbAdminPassword;
 
     // Deploy custom VPC
     const vpc = new ec2.Vpc(this, 'TheVPC', {
@@ -59,39 +69,30 @@ export class GenaiStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'VpcIdOutput', {
       value: vpc.vpcId,
       description: 'The ID of the VPC',
-      exportName: `CUSTOM-VPC-${envName}`,  // Make the export name unique by appending the environment name
+      exportName: `CUSTOM-VPC-${envName}`,
     });
 
-    // EC2 instance configuration
+    // EC2 instance configuration using envConfig
     const ec2Instance = new ec2.Instance(this, 'GenaiInstance', {
-      instanceType: new ec2.InstanceType(props.instanceType),  // Using the 'instanceType' from props
-      machineImage: ec2.MachineImage.latestAmazonLinux2(),  // Use AmazonLinux2 as recommended
+      instanceType: new ec2.InstanceType(instanceType),
+      machineImage: ec2.MachineImage.latestAmazonLinux2(),
       vpc,
       securityGroup: new ec2.SecurityGroup(this, 'EC2SecurityGroup', {
         vpc,
       }),
     });
 
-    // Create RDS Database instance with credentials from secrets manager
-    const dbCredentials = new secretsmanager.Secret(this, 'DbCredentials', {
-      secretName: 'genai-db-credentials',
-      generateSecretString: {
-        secretStringTemplate: JSON.stringify({
-          username: props.dbAdminUsername,  // Using 'dbAdminUsername' from props
-          password: props.dbAdminPassword,  // Using 'dbAdminPassword' from props
-        }),
-        generateStringKey: 'password',  // This generates a password automatically if you don't provide one
-      },
-    });
-
+    // Create RDS Database instance with provided credentials
     const rdsInstance = new rds.DatabaseInstance(this, 'GenaiDb', {
       vpc,
-      instanceType: new ec2.InstanceType(props.dbInstanceType),  // Using 'dbInstanceType' from props
+      instanceType: new ec2.InstanceType(dbInstanceType),
       engine: dbEngine === 'postgres'
         ? rds.DatabaseInstanceEngine.postgres({ version: rds.PostgresEngineVersion.VER_12_4 })
         : rds.DatabaseInstanceEngine.mysql({ version: rds.MysqlEngineVersion.VER_8_0_23 }),
-      credentials: rds.Credentials.fromSecret(dbCredentials),
-      allocatedStorage: props.dbStorage,  // Using 'dbStorage' from props
+      credentials: rds.Credentials.fromUsername(dbAdminUsername, {
+        password: cdk.SecretValue.plainText(dbAdminPassword),
+      }),
+      allocatedStorage: dbStorage,
       multiAz: true,
       vpcSubnets: {
         subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
@@ -103,14 +104,14 @@ export class GenaiStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'Ec2InstanceId', { value: ec2Instance.instanceId });
     new cdk.CfnOutput(this, 'DbInstanceEndpoint', { value: rdsInstance.dbInstanceEndpointAddress });
 
-    // Create Auto Scaling Group (ASG) based on EC2 instance
+    // Create Auto Scaling Group (ASG) based on EC2 instance configuration
     const asg = new autoscaling.AutoScalingGroup(this, 'GenaiASG', {
       vpc,
-      instanceType: new ec2.InstanceType(props.instanceType),  // Using 'instanceType' from props
-      machineImage: ec2.MachineImage.latestAmazonLinux2(),  // Use AmazonLinux2 as recommended
-      minCapacity: props.minCapacity,  // Using 'minCapacity' from props
-      maxCapacity: props.maxCapacity,  // Using 'maxCapacity' from props
-      desiredCapacity: props.desiredCapacity,  // Using 'desiredCapacity' from props
+      instanceType: new ec2.InstanceType(instanceType),
+      machineImage: ec2.MachineImage.latestAmazonLinux2(),
+      minCapacity: minCapacity,
+      maxCapacity: maxCapacity,
+      desiredCapacity: desiredCapacity,
     });
 
     // Output ASG ID

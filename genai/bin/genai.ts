@@ -6,17 +6,19 @@ import { GenaiStack } from '../lib/genai-stack';
 // Load configuration from config.json
 const config = JSON.parse(fs.readFileSync('config.json', 'utf8'));
 
-// Get environment name (default to 'dev')
+// Get environment name (default to 'dev' if not provided)
 const envName = process.env.DEPLOY_ENV || 'dev';
-const envConfig = config[envName];
+const envConfig = config[envName]; // Fetch the environment-specific configuration
 
+// Check if environment configuration exists
 if (!envConfig) {
   throw new Error(`Configuration for environment "${envName}" is missing in config.json.`);
 }
 
-// Create a new CDK app and pass the environment-specific configuration
+// Create a new CDK app
 const app = new cdk.App();
 
+// Deploy the stack with environment-specific configuration from config.json
 new GenaiStack(app, 'GenaiStack', {
   vpcCidr: envConfig.vpcCidr,
   instanceType: envConfig.instanceType,
@@ -28,5 +30,5 @@ new GenaiStack(app, 'GenaiStack', {
   desiredCapacity: envConfig.desiredCapacity,
   minCapacity: envConfig.minCapacity,
   maxCapacity: envConfig.maxCapacity,
-  env: { account: '564395526804', region: 'ca-central-1' },
+  env: { account: '564395526804', region: 'ca-central-1' }, // Replace with your own account and region
 });
