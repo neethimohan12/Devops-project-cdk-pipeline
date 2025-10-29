@@ -1,88 +1,48 @@
-name: Deploy CDK to AWS
+name: Deploy to AWS using CDK
 
 on:
-  workflow_dispatch:
-    inputs:
-      action:
-        description: "CDK action to perform (deploy or destroy)"
-        required: true
-        default: "deploy"
-        type: choice
-        options:
-          - deploy
-          - destroy
-      deploy_env:
-        description: "Environment to deploy (dev, test, prod)"
-        required: true
-        default: "dev"
-        type: choice
-        options:
-          - dev
-          - test
-          - prod
-
   push:
     branches:
-      - main
-
+      - main # or your default branch (e.g., master)
   pull_request:
     branches:
-      - main
-
-permissions:
-  id-token: write
-  contents: read
+      - main # Trigger deployment when PR is merged to main
 
 jobs:
-  cdk-deploy:
+  deploy:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: cdk-app # <-- your CDK project root
-    env:
-      ACTION: ${{ github.event.inputs.action || 'deploy' }}
-      DEPLOY_ENV: ${{ github.event.inputs.deploy_env || 'dev' }}
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Setup Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: 18
+          node-version: "18.x" # Adjust as needed, ensure Node.js v18.x is installed
 
-      - name: Install project dependencies
-        run: npm ci
-
-      - name: Install AWS CDK CLI globally
-        run: npm install -g aws-cdk
-
-      - name: CDK Bootstrap
-        run: cdk bootstrap aws://${{ secrets.AWS_ACCOUNT_ID }}/${{ secrets.AWS_REGION }}
-
-      - name: Show environment variables
+      - name: Install dependencies
         run: |
-          echo "ACTION=$ACTION"
-          echo "DEPLOY_ENV=$DEPLOY_ENV"
+          npm install -g aws-cdk
+          npm install
 
-      - name: CDK Synth
-        run: npx cdk synth DevopsCdkStack
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }} # Set your AWS credentials in GitHub Secrets
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1 # Replace with your desired region (e.g., us-west-2)
 
-      - name: CDK Deploy or Destroy
+      - name: Install CDK dependencies
+        run: npm install
+
+      - name: Bootstrap AWS CDK
+        run: cdk bootstrap --profile default # This is required only if you're deploying for the first time
+
+      - name: Deploy CDK Stack
         run: |
-          set -e  # stop on first error
-          if [ "$ACTION" = "deploy" ]; then
-            npx cdk deploy DevopsCdkStack --require-approval never
-          elif [ "$ACTION" = "destroy" ]; then
-            npx cdk destroy DevopsCdkStack --require-approval never
-          else
-            echo "Invalid action: $ACTION"
-            exit 1
-          fi
+          cdk deploy GenaiStack --require-approval never  # Replace 'GenaiStack' with the name of your stack class
+
+      - name: Clean up
+        run: |
+          cdk destroy --force --no-rollback  # Optional, if you want to clean up after deploy (e.g., for testing environments)
