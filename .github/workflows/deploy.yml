@@ -37,7 +37,6 @@ jobs:
     env:
       ACTION: ${{ github.event.inputs.action || 'deploy' }}
       DEPLOY_ENV: ${{ github.event.inputs.deploy_env || 'dev' }}
-      STACK_NAME: "GenaiStack-${{ github.event.inputs.deploy_env || 'dev' }}" # Dynamic stack name based on environment
 
     steps:
       - name: Checkout repo
@@ -64,14 +63,14 @@ jobs:
 
       - name: CDK Synth
         run: |
-          DEPLOY_ENV=$DEPLOY_ENV STACK_NAME=$STACK_NAME npx cdk synth
+          DEPLOY_ENV=$DEPLOY_ENV npx cdk synth
 
       - name: CDK Deploy or Destroy
         run: |
           if [ "$ACTION" == "deploy" ]; then
-            DEPLOY_ENV=$DEPLOY_ENV STACK_NAME=$STACK_NAME npx cdk deploy $STACK_NAME --require-approval never
+            DEPLOY_ENV=$DEPLOY_ENV npx cdk deploy --require-approval never
           elif [ "$ACTION" == "destroy" ]; then
-            DEPLOY_ENV=$DEPLOY_ENV STACK_NAME=$STACK_NAME npx cdk destroy $STACK_NAME --require-approval never
+            DEPLOY_ENV=$DEPLOY_ENV npx cdk destroy --require-approval never
           else
             echo "Invalid action: $ACTION"
             exit 1
