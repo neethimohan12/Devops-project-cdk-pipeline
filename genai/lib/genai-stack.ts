@@ -40,7 +40,7 @@ export class GenaiStack extends cdk.Stack {
     const instanceType = envConfig.instanceType;
     const dbEngine = envConfig.dbEngine;
     const dbStorage = envConfig.dbStorage;
-    const dbInstanceType = envConfig.dbInstanceType || 'db.t3.micro'; // Default to db.t3.micro if not specified
+    const dbInstanceType = envConfig.dbInstanceType 
     const desiredCapacity = envConfig.desiredCapacity;
     const minCapacity = envConfig.minCapacity;
     const maxCapacity = envConfig.maxCapacity;
@@ -87,7 +87,7 @@ export class GenaiStack extends cdk.Stack {
       vpc,
       instanceType: new ec2.InstanceType(dbInstanceType),
       engine: dbEngine === 'postgres'
-        ? rds.DatabaseInstanceEngine.postgres({ version: rds.PostgresEngineVersion.VER_12_9 })
+        ? rds.DatabaseInstanceEngine.postgres({ version: rds.PostgresEngineVersion.VER_12_22 })
         : rds.DatabaseInstanceEngine.mysql({ version: rds.MysqlEngineVersion.VER_8_0_23 }),
       credentials: rds.Credentials.fromUsername(dbAdminUsername, {
         password: cdk.SecretValue.plainText(dbAdminPassword),
