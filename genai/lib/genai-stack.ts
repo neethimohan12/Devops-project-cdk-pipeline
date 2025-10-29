@@ -5,6 +5,8 @@ import * as rds from 'aws-cdk-lib/aws-rds';
 import * as fs from 'fs';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as autoscaling from 'aws-cdk-lib/aws-autoscaling';
+import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
+
 
 // Custom StackProps interface without `envName`
 interface GenaiStackProps extends cdk.StackProps {
@@ -72,6 +74,13 @@ export class GenaiStack extends cdk.Stack {
       exportName: `CUSTOM-VPC-${envName}`,
     });
 
+        // Security Groups for EC2, ALB, and DB
+    const ec2SG = new ec2.SecurityGroup(this, 'EC2SecurityGroup', { vpc });
+    const albSG = new ec2.SecurityGroup(this, 'ALBSecurityGroup', { vpc });
+    albSG.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80), 'Allow HTTP from the internet');
+    const dbSG = new ec2.SecurityGroup(this, 'DbSecurityGroup', { vpc });
+    dbSG.addIngressRule(ec2SG, ec2.Port.tcp(5432), 'Allow PostgreSQL from EC2');
+
     // EC2 instance configuration using envConfig
     const ec2Instance = new ec2.Instance(this, 'GenaiInstance', {
       instanceType: new ec2.InstanceType(instanceType),
@@ -112,6 +121,36 @@ export class GenaiStack extends cdk.Stack {
       minCapacity: minCapacity,
       maxCapacity: maxCapacity,
       desiredCapacity: desiredCapacity,
+    });
+
+    // Create the ALB (Application Load Balancer)
+    const alb = new elbv2.ApplicationLoadBalancer(this, 'GenaiALB', {
+      vpc,
+      internetFacing: true, // This ALB will be public-facing
+      securityGroup: albSG,
+      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC }, // In the public subnet
+    });
+
+    // Create a listener for the ALB
+    const listener = alb.addListener('AlbListener', {
+      port: 80,
+      open: true,
+    });
+
+    // Add a target group to the ALB
+    listener.addTargets('AlbTargets', {
+      port: 80,
+      targets: [asg],
+      healthCheck: {
+        path: '/health', // Health check on the `/health` endpoint
+        interval: cdk.Duration.seconds(60), // Health check every minute
+      },
+    });
+
+    // Output the ALB DNS
+    new cdk.CfnOutput(this, 'AlbDns', {
+      value: alb.loadBalancerDnsName,
+      description: 'DNS name of the Application Load Balancer',
     });
 
     // Output ASG ID
