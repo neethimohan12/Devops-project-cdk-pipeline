@@ -1,77 +1,87 @@
-name: Deploy CDK
+name: Deploy CDK to AWS
 
 on:
   workflow_dispatch:
     inputs:
       action:
-        description: "CDK action Choose the action: deploy or destroy"
+        description: "CDK action to perform (deploy or destroy)"
         required: true
         default: "deploy"
         type: choice
         options:
           - deploy
           - destroy
+      deploy_env:
+        description: "Environment to deploy (dev, test, prod)"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - test
+          - prod
+
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
 
 permissions:
-  id-token: write # Allow the workflow to request OIDC tokens.
-  contents: read # Allow the workflow to read repository contents.
+  id-token: write
+  contents: read
 
 jobs:
   cdk-deploy:
-    runs-on: ubuntu-latest # Use the latest Ubuntu runner
+    runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: genai # Set the working directory to genai if it's a subdirectory
+        working-directory: cdk-app # <-- your CDK project root
     env:
-      ACTION: ${{ github.event.inputs.action || 'deploy' }} # Action input (deploy or destroy)
+      ACTION: ${{ github.event.inputs.action || 'deploy' }}
+      DEPLOY_ENV: ${{ github.event.inputs.deploy_env || 'dev' }}
 
     steps:
-      # Step 1: Checkout the repository
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # Step 2: Set up AWS credentials from IAM Role (ensure IAM role has necessary permissions)
-      - name: Configure AWS credentials from IAM Role
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }} # Ensure you have AWS_ROLE_ARN in GitHub Secrets
-          aws-region: ${{ secrets.AWS_REGION }} # Ensure you have AWS_REGION in GitHub Secrets
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-      # Step 3: Set up Node.js
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v3
         with:
-          node-version: 20 # Specify the Node.js version you want to use
+          node-version: 18
 
-      # Step 4: Install dependencies and CDK
-      - name: Install CDK and dependencies
-        run: |
-          npm ci
-          npm install -g aws-cdk
+      - name: Install project dependencies
+        run: npm ci
 
-      # Optional: Step 5 - Load environment variables from .env
-      # - name: Load environment variables from .env
-      #   run: |
-      #     if [ -f .env ]; then
-      #       export $(cat .env | xargs)
-      #     fi
+      - name: Install AWS CDK CLI globally
+        run: npm install -g aws-cdk
 
-      # Step 6: CDK Bootstrapping (if needed)
-      - name: CDK Bootstrap (if needed)
+      - name: CDK Bootstrap
         run: cdk bootstrap aws://${{ secrets.AWS_ACCOUNT_ID }}/${{ secrets.AWS_REGION }}
 
-      # Step 7: CDK Synth (synthesize CloudFormation templates)
-      - name: CDK Synth
+      - name: Show environment variables
         run: |
-          npx cdk synth
+          echo "ACTION=$ACTION"
+          echo "DEPLOY_ENV=$DEPLOY_ENV"
 
-      # Step 8: CDK Deploy or Destroy
+      - name: CDK Synth
+        run: npx cdk synth DevopsCdkStack
+
       - name: CDK Deploy or Destroy
         run: |
-          if [ "$ACTION" == "deploy" ]; then
-            npx cdk deploy --require-approval never
-          elif [ "$ACTION" == "destroy" ]; then
-            npx cdk destroy --require-approval never --force  # Added --force flag
+          set -e  # stop on first error
+          if [ "$ACTION" = "deploy" ]; then
+            npx cdk deploy DevopsCdkStack --require-approval never
+          elif [ "$ACTION" = "destroy" ]; then
+            npx cdk destroy DevopsCdkStack --require-approval never
           else
             echo "Invalid action: $ACTION"
             exit 1
