@@ -55,17 +55,17 @@ export class GenaiStack extends cdk.Stack {
       ],
     });
 
-    // Output the VPC and Subnets
+    // Output the VPC and Subnets with a unique export name
     new cdk.CfnOutput(this, 'VpcIdOutput', {
       value: vpc.vpcId,
       description: 'The ID of the VPC',
-      exportName: 'CUSTOM-VPC-CANADA',
+      exportName: `CUSTOM-VPC-${envName}`,  // Make the export name unique by appending the environment name
     });
 
     // EC2 instance configuration
     const ec2Instance = new ec2.Instance(this, 'GenaiInstance', {
       instanceType: new ec2.InstanceType(props.instanceType),  // Using the 'instanceType' from props
-      machineImage: ec2.MachineImage.latestAmazonLinux(),
+      machineImage: ec2.MachineImage.latestAmazonLinux2(),  // Use AmazonLinux2 as recommended
       vpc,
       securityGroup: new ec2.SecurityGroup(this, 'EC2SecurityGroup', {
         vpc,
@@ -107,7 +107,7 @@ export class GenaiStack extends cdk.Stack {
     const asg = new autoscaling.AutoScalingGroup(this, 'GenaiASG', {
       vpc,
       instanceType: new ec2.InstanceType(props.instanceType),  // Using 'instanceType' from props
-      machineImage: ec2.MachineImage.latestAmazonLinux(),
+      machineImage: ec2.MachineImage.latestAmazonLinux2(),  // Use AmazonLinux2 as recommended
       minCapacity: props.minCapacity,  // Using 'minCapacity' from props
       maxCapacity: props.maxCapacity,  // Using 'maxCapacity' from props
       desiredCapacity: props.desiredCapacity,  // Using 'desiredCapacity' from props
