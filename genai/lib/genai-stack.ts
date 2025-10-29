@@ -87,7 +87,7 @@ export class GenaiStack extends cdk.Stack {
       vpc,
       instanceType: new ec2.InstanceType(dbInstanceType),
       engine: dbEngine === 'postgres'
-        ? rds.DatabaseInstanceEngine.postgres({ version: rds.PostgresEngineVersion.VER_12_4 })
+        ? rds.DatabaseInstanceEngine.postgres({ version: rds.PostgresEngineVersion.VER_12_9 })
         : rds.DatabaseInstanceEngine.mysql({ version: rds.MysqlEngineVersion.VER_8_0_23 }),
       credentials: rds.Credentials.fromUsername(dbAdminUsername, {
         password: cdk.SecretValue.plainText(dbAdminPassword),
