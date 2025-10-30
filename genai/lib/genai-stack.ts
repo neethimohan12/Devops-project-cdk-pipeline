@@ -2,11 +2,11 @@ import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as rds from 'aws-cdk-lib/aws-rds';
-import * as fs from 'fs';
-import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
-import * as autoscaling from 'aws-cdk-lib/aws-autoscaling';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
+import * as autoscaling from 'aws-cdk-lib/aws-autoscaling';
+import * as fs from 'fs';
 
+// Custom StackProps interface without `envName`
 interface GenaiStackProps extends cdk.StackProps {
   vpcCidr: string;
   instanceType: string;
@@ -65,26 +65,54 @@ export class GenaiStack extends cdk.Stack {
       ],
     });
 
-    // Output the VPC and Subnets with a unique export name
-    new cdk.CfnOutput(this, 'VpcIdOutput', {
-      value: vpc.vpcId,
-      description: 'The ID of the VPC',
-      exportName: `CUSTOM-VPC-${envName}`,
+    // Application Load Balancer Security Group (ALB)
+    const albSG = new ec2.SecurityGroup(this, 'AlbSecurityGroup', {
+      vpc,
+      description: 'Allow HTTP and HTTPS traffic from the internet to ALB',
+      allowAllOutbound: true,  // Allow all outbound traffic
     });
 
-    // **Generate unique names for each Security Group**
-    const ec2SG = new ec2.SecurityGroup(this, `EC2SecurityGroup-${envName}`, { vpc });
-    const albSG = new ec2.SecurityGroup(this, `ALBSecurityGroup-${envName}`, { vpc });
-    albSG.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80), 'Allow HTTP from the internet');
-    const dbSG = new ec2.SecurityGroup(this, `DbSecurityGroup-${envName}`, { vpc });
-    dbSG.addIngressRule(ec2SG, ec2.Port.tcp(5432), 'Allow PostgreSQL from EC2');
+    // Inbound Rules: Allow HTTP (80) and HTTPS (443) from the internet
+    albSG.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80), 'Allow HTTP traffic');
+    albSG.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), 'Allow HTTPS traffic');
+
+    // EC2 Security Group
+    const ec2SG = new ec2.SecurityGroup(this, 'EC2SecurityGroup', {
+      vpc,
+      description: 'Allow traffic only from ALB security group on ports 80/443',
+      allowAllOutbound: true,  // Allow all outbound traffic
+    });
+
+    // Inbound Rules: Allow traffic only from ALB security group on port 80/443
+    ec2SG.addIngressRule(albSG, ec2.Port.tcp(80), 'Allow HTTP traffic from ALB');
+    ec2SG.addIngressRule(albSG, ec2.Port.tcp(443), 'Allow HTTPS traffic from ALB');
+
+    // RDS Database Security Group
+    const dbSG = new ec2.SecurityGroup(this, 'DbSecurityGroup', {
+      vpc,
+      description: 'Allow traffic only from EC2 instances on database port',
+      allowAllOutbound: false,  // Restrict outbound traffic
+    });
+
+    // Inbound Rules: Allow traffic only from EC2 instances on port 3306 (MySQL) or 5432 (PostgreSQL)
+    dbSG.addIngressRule(ec2.Peer.securityGroupId(ec2SG.securityGroupId), ec2.Port.tcp(3306), 'Allow MySQL traffic from EC2 instances');  // For MySQL
+    // or
+    // dbSG.addIngressRule(ec2.Peer.securityGroupId(ec2SG.securityGroupId), ec2.Port.tcp(5432), 'Allow PostgreSQL traffic from EC2 instances');  // For PostgreSQL
 
     // EC2 instance configuration using envConfig
     const ec2Instance = new ec2.Instance(this, 'GenaiInstance', {
       instanceType: new ec2.InstanceType(instanceType),
       machineImage: ec2.MachineImage.latestAmazonLinux2(),
       vpc,
-      securityGroup: ec2SG,
+      securityGroup: ec2SG,  // Attach the EC2 Security Group
+    });
+
+    // Create Application Load Balancer
+    const alb = new elbv2.ApplicationLoadBalancer(this, `GenaiALB-${envName}`, {
+      vpc,
+      internetFacing: true,
+      securityGroup: albSG,  // Attach the ALB Security Group
+      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
     });
 
     // Create RDS Database instance with provided credentials
@@ -102,14 +130,14 @@ export class GenaiStack extends cdk.Stack {
       vpcSubnets: {
         subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
       },
-      securityGroups: [dbSG],
+      securityGroups: [dbSG],  // Attach the RDS Security Group
     });
 
     // Output the EC2 instance and DB instance IDs
     new cdk.CfnOutput(this, 'Ec2InstanceId', { value: ec2Instance.instanceId });
     new cdk.CfnOutput(this, 'DbInstanceEndpoint', { value: rdsInstance.dbInstanceEndpointAddress });
 
-    // Create Auto Scaling Group (ASG) based on EC2 instance configuration
+    // Auto Scaling Group (ASG) based on EC2 instance configuration
     const asg = new autoscaling.AutoScalingGroup(this, 'GenaiASG', {
       vpc,
       instanceType: new ec2.InstanceType(instanceType),
@@ -117,36 +145,7 @@ export class GenaiStack extends cdk.Stack {
       minCapacity: minCapacity,
       maxCapacity: maxCapacity,
       desiredCapacity: desiredCapacity,
-    });
-
-    // Create the ALB (Application Load Balancer)
-    const alb = new elbv2.ApplicationLoadBalancer(this, `GenaiALB-${envName}`, {
-      vpc,
-      internetFacing: true, // This ALB will be public-facing
-      securityGroup: albSG,
-      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC }, // In the public subnet
-    });
-
-    // Create a listener for the ALB
-    const listener = alb.addListener('AlbListener', {
-      port: 80,
-      open: true,
-    });
-
-    // Add a target group to the ALB
-    listener.addTargets('AlbTargets', {
-      port: 80,
-      targets: [asg],
-      healthCheck: {
-        path: '/health', // Health check on the `/health` endpoint
-        interval: cdk.Duration.seconds(60), // Health check every minute
-      },
-    });
-
-    // Output the ALB DNS
-    new cdk.CfnOutput(this, 'AlbDns', {
-      value: alb.loadBalancerDnsName,
-      description: 'DNS name of the Application Load Balancer',
+      securityGroup: ec2SG,  // Attach the EC2 Security Group to the ASG
     });
 
     // Output ASG ID
